@@ -1,0 +1,26 @@
+# Windows-compatible subset of MinerU-Diffusion requirements
+# (use this with the `hf` engine; nano_dvlm/sglang engines are Linux-only)
+#
+# Install order:
+#   1) PyTorch 2.8.0+cu128 from the official PyTorch wheel index (Windows wheels exist):
+#        pip install torch==2.8.0 torchvision==0.23.0 --index-url https://download.pytorch.org/whl/cu128
+#   2) Then this file:
+#        pip install -r requirements-windows.txt
+#
+# Excluded vs upstream requirements.txt (Linux-only build chain):
+#   - flash-attn==2.8.3   (modeling_mineru_diffusion.py falls back to PyTorch SDPA when missing)
+#   - triton==3.4.0       (only required by nano_dvlm/liger paths)
+#   - liger-kernel==0.6.4 (only required by nano_dvlm engine)
+
+accelerate==1.11.0
+einops==0.8.1
+numpy>=2.2.6
+pillow>=11.0.0
+qwen-vl-utils==0.0.14
+safetensors==0.6.2
+sentencepiece==0.2.1
+termcolor==3.2.0
+tqdm==4.67.1
+transformers==4.52.1
+xxhash==3.6.0
+huggingface_hub>=0.36.0

@@ -29,3 +29,7 @@ dist/
 # Environment files
 .env
 .env.*
+
+# Model weights and inference outputs (downloaded locally; not committed)
+model/
+outputs/

@@ -32,7 +32,141 @@
   <video src="https://github.com/user-attachments/assets/bf3e73a1-6d24-48b5-9dbe-94efee3993e0" controls width="200" align="center"></video>
 </p>
 
+---
 
+> **Fork notice / 포크 안내** — This fork ([`CVKim/mineru_diffusion`](https://github.com/CVKim/mineru_diffusion)) adds a **Windows-native setup path** (Anaconda + PyTorch 2.8 cu128, no `flash-attn` / `triton` / `liger-kernel` required) on top of the upstream `opendatalab/MinerU-Diffusion` codebase. The upstream Linux instructions remain valid; jump to [🪟 Windows Quickstart](#-windows-quickstart-cvkim-fork) for the Windows path. Workflow: 개발은 `dev` 브랜치에서, 검증된 변경만 `main` 으로 머지.
+
+---
+
+## 🪟 Windows Quickstart (CVKim fork)
+
+Tested on **Windows 11 + RTX 3080 (10GB) + Anaconda + NVIDIA driver 591.86 (CUDA 13.1 capable)**. End-to-end setup → first inference: ~5 minutes (dominated by the 5.1 GB model download).
+
+### Why the upstream `requirements.txt` doesn't install on Windows
+
+| Package | Used by | Windows wheel? | This fork's choice |
+|---|---|---|---|
+| `flash-attn==2.8.3` | hf (optional), nano_dvlm (required) | ❌ Linux-only wheels | **Skip** — `modeling_mineru_diffusion.py` falls back to PyTorch SDPA at runtime |
+| `triton==3.4.0` | nano_dvlm/liger paths | ❌ no official Windows wheel | **Skip** — not imported on the hf path |
+| `liger-kernel==0.6.4` | nano_dvlm activation kernels | ❌ depends on triton | **Skip** — not imported on the hf path |
+
+The `hf` engine therefore runs **unmodified** on Windows once those three packages are removed; see [`requirements-windows.txt`](./requirements-windows.txt).
+
+### 1) One-shot environment setup
+
+From the repo root in **PowerShell**:
+
+```powershell
+# Creates the `dmineru` conda env, installs PyTorch 2.8+cu128, and the rest of the deps.
+.\scripts\setup_windows.ps1
+```
+
+What it runs under the hood:
+
+```powershell
+conda create -n dmineru python=3.12 -y
+conda activate dmineru
+python -m pip install --upgrade pip
+python -m pip install torch==2.8.0 torchvision==0.23.0 `
+    --index-url https://download.pytorch.org/whl/cu128
+python -m pip install -r requirements-windows.txt
+```
+
+### 2) Download the 2.5B weights (~5.1 GB)
+
+```powershell
+conda activate dmineru
+python -c "from huggingface_hub import snapshot_download; snapshot_download('opendatalab/MinerU-Diffusion-V1-0320-2.5B', local_dir='./model')"
+```
+
+The 22-file snapshot lands in `./model/` (gitignored). On a 100 Mbit/s link this takes ~3 minutes.
+
+### 3) Run inference on a new sample image
+
+The shipped helper accepts any image path. Place your own image anywhere on disk and pass it via `-ImagePath`:
+
+```powershell
+# Plain text OCR (default prompt type)
+.\scripts\run_inference.ps1 -ImagePath .\assets\image.png
+
+# Try the other three task prompts the model was trained for:
+.\scripts\run_inference.ps1 -ImagePath .\my_doc.png -PromptType layout
+.\scripts\run_inference.ps1 -ImagePath .\my_table.png -PromptType table
+.\scripts\run_inference.ps1 -ImagePath .\my_formula.png -PromptType formula
+```
+
+Underlying Python invocation (use this if you don't want to go through PowerShell):
+
+```powershell
+$env:PYTHONIOENCODING = "utf-8"; $env:PYTHONUTF8 = "1"
+python scripts\run_inference.py `
+    --engine hf `
+    --model-path .\model `
+    --image-path .\assets\image.png `
+    --prompt-type text `
+    --device cuda `
+    --dtype bfloat16
+```
+
+> ⚠️ The `PYTHONIOENCODING=utf-8` line is required on **Korean Windows** (default CP949 console) — otherwise the print path crashes on non-ASCII tokens such as em-dash, `\varepsilon`, etc. The PowerShell wrapper sets this for you.
+
+### 4) Sample run on `assets/image.png` — actual output
+
+```
+================================================================================================
+MinerU HF Inference
+------------------------------------------------------------------------------------------------
+model       : E:\Dev\MinerU-Diffusion\model
+image       : E:\Dev\MinerU-Diffusion\assets\image.png
+prompt      : text
+device      : cuda
+dtype       : torch.bfloat16
+gen_length  : 1024
+block_size  : 32
+================================================================================================
+MinerU Result
+================================================================================================
+Abstract
+Optizing complex systems, ranging from LLM prompts to multi-turn agents, traditionally
+requires labor-intensive manual iteration. We formalize this challenge as a stochastic
+generative optimization problem where a generative language model acts as the optimizer,
+guided by numerical rewards and text feedback to discover the best system. We introduce
+Prioritized Optimization with Local Contextual Aggregation (POLCA), a scalable framework
+designed to handle stochasticity in optimization—such as noisy feedback, sampling
+minibatches, and stochastic system behaviors—while effectively managing the unconstrained
+expansion of solution space.  ... [truncated for brevity; full result in outputs/image_text.log]
+================================================================================================
+elapsed: 5.83s
+```
+
+And with `--prompt-type layout`, the same image (3.79 s) returns block-level boxes in MinerU's
+custom token format:
+
+```
+<|box_start|>000 000 999 028<|box_end|><|ref_start|>title<|ref_end|><|rotate_up|>
+<|box_start|>000 030 997 999<|box_end|><|ref_start|>text<|ref_end|><|rotate_up|>
+```
+
+Numbers are normalised 0–999 coordinates within the image; `<|ref_start|>…<|ref_end|>` carries
+the block class (`title`, `text`, `table`, `formula`, …) and `<|rotate_up|>` is the orientation tag.
+
+### 5) Where the outputs go
+
+The PowerShell wrapper prints to stdout. The dev workflow used here also tees a copy to
+`outputs/<name>_<prompt_type>.log` — for example `outputs/image_text.log` and
+`outputs/image_layout.log`. The `outputs/` directory is gitignored so you can dump as many
+runs as you like without polluting the tree.
+
+### 6) Troubleshooting
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `UnicodeEncodeError: 'cp949' codec can't encode character …` | Korean Windows default console codepage. | Set `PYTHONIOENCODING=utf-8` (the PowerShell wrapper does this). |
+| `ModuleNotFoundError: flash_attn` while loading model | Some user code path still imports it explicitly. | Use the **`hf` engine** (the `nano_dvlm` engine genuinely requires `flash-attn`). |
+| `CUDA out of memory` on 10 GB cards | Larger images push KV cache past 10 GB. | Lower `--max-length` (e.g. 2048) or `--gen-length` (e.g. 512). |
+| Model loads on GPU 0 only despite 2 GPUs | `runner.py` uses `model.to("cuda")` directly. | Set `CUDA_VISIBLE_DEVICES=1` to pick the other GPU, or keep both visible — only one is used for single-image inference. |
+
+---
 
 ## 📰 News
 
